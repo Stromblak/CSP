@@ -19,6 +19,7 @@ double fer0 = 1000;
 minstd_rand rng;
 
 // Variables
+int hilos = 6;
 int poblacion = 20;			// Poblacion
 int torneos = 17;			// Numero de torneos para crear el antibiotico
 double ph = 0.05;			// Probabilidad de que el individuo use 
@@ -125,6 +126,7 @@ class Dataset{
 			vector<short> hamming(n, m);
 
 			for(int i=0; i<m; i++) for(int j: posiciones[i][sol[i]]) hamming[j]--;
+
 			return *max_element(hamming.begin(), hamming.end());
 		}
 				
@@ -220,13 +222,16 @@ class Sim{
 		void evaluarBacterias(){
 			int b, mejorIter = dataset->m + 1;
 
-			for(int i=0; i<poblacion; i++){
-				bacterias[i].actualizarFitness();
-				if(bacterias[i].fitness < mejorIter){
-					mejorIter = bacterias[i].fitness;
-					b = i;
+			#pragma omp parallel num_threads ( hilos )
+				for(int i=0; i<poblacion; i++){
+					bacterias[i].actualizarFitness();
+
+					#pragma omp critical
+						if(bacterias[i].fitness < mejorIter){
+							mejorIter = bacterias[i].fitness;
+							b = i;
+						}
 				}
-			}
 
 			if(mejorIter < mejor){
 				mejor = mejorIter;
@@ -243,13 +248,14 @@ class Sim{
 
 		void crearAntibiotico(){
 			antibiotico = 0;
-
-			for(int i=0; i<torneos; i++){
-				int r1 = rng()%poblacion;
-				int r2 = (r1 + 1 + rng()%(poblacion-1))%poblacion;
-				
-				antibiotico = max(antibiotico, max(bacterias[r1].fitness, bacterias[r2].fitness));
-			}
+			#pragma omp parallel num_threads ( hilos )
+				for(int i=0; i<torneos; i++){
+					int r1 = rng()%poblacion;
+					int r2 = (r1 + 1 + rng()%(poblacion-1))%poblacion;
+					
+					#pragma omp critical
+						antibiotico = max(antibiotico, max(bacterias[r1].fitness, bacterias[r2].fitness));
+				}
 		}
 
 		void clasificacion(){
@@ -263,22 +269,26 @@ class Sim{
 		}
 
 		void mutacion(){
-			for(Bacteria &b: bacterias) if(prob(pm)) b.mutar();
+			#pragma omp parallel num_threads ( hilos )
+				for(Bacteria &b: bacterias) if(prob(pm)) b.mutar();
 		}
 
 		void busquedaLocal(){
-			for(Bacteria &b: bacterias) if(prob(bl)) b.busquedaLocal();
+			#pragma omp parallel num_threads ( hilos )
+				for(Bacteria &b: bacterias) if(prob(bl)) b.busquedaLocal();
 		}
 
 		void administrarAntibiotico(){		
 			if(donadoras.size() <= 1) return;
 
-			for(int i: receptoras){
-				int r1 = rng()%donadoras.size();
-				int r2 = (donadoras[r1] + 1 + rng()%(donadoras.size()-1))%donadoras.size();
+			#pragma omp parallel num_threads ( hilos )
+				for(int i: receptoras){
+					int r1 = rng()%donadoras.size();
+					int r2 = (donadoras[r1] + 1 + rng()%(donadoras.size()-1))%donadoras.size();
 
-				bacterias[i].hijo(&bacterias[donadoras[r1]], &bacterias[donadoras[r2]]);
-			}
+					#pragma omp critical
+						bacterias[i].hijo(&bacterias[donadoras[r1]], &bacterias[donadoras[r2]]);
+				}
 		}
 
 		void actualizarFeromonas(){
@@ -290,7 +300,8 @@ class Sim{
 		}
 
 		void agregarFeromonas(string sol, int cal){
-			for(int i=0; i<sol.size(); i++) dataset->feromonas[i][sol[i]] += dataset->m - cal;
+			#pragma omp parallel num_threads ( hilos )
+				for(int i=0; i<sol.size(); i++) dataset->feromonas[i][sol[i]] += dataset->m - cal;
 		}
 
 	public:
@@ -363,6 +374,8 @@ int main(int argc, char *argv[]){
 		// Variables
 		if( !strcmp(argv[i], "-p" ) ) poblacion = atoi(argv[i+1]);
 		if( !strcmp(argv[i], "-tor" ) ) torneos = atoi(argv[i+1]);
+		
+		if( !strcmp(argv[i], "-h" ) ) hilos = atoi(argv[i+1]);
 
 		if( !strcmp(argv[i], "-pg" ) ) ph = atof(argv[i+1]);
 		if( !strcmp(argv[i], "-nb" ) ) N = atoi(argv[i+1]);
