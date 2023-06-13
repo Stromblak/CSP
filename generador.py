@@ -3,7 +3,7 @@ import random
 
 bases = ["A", "C", "G", "T"]
 n = 10
-m = 1000
+m = 20
 
 
 f = open("./instancias/" + str(n) + "-" + str(m) + ".txt", "w")

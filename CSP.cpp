@@ -27,7 +27,7 @@ double determinismo = 0.9;
 int poblacion = 500;		// Poblacion
 int torneos = 17;			// Numero de torneos para crear el antibiotico
 double pg = 0.05;			// Probabilidad de que el individuo use 
-int nb = 23;
+int nb = 23;				// Limite de busquedas sin mejoras
 
 double pm = 0.001;			// Probabilidad mutacion
 double bl = 0.01;			// Probabilidad busqueda local
@@ -128,10 +128,8 @@ class Dataset{
 			return mejorar_solucion(mejor, nb);
 		}
 
-		pair<string, int> mejorar_solucion(string sol, int N){
-			cout << calidad(sol) << endl;
-
-			vector<int> d(n, m), d2(n, m);
+		pair<string, int> mejorar_solucion(string sol, short N){
+			vector<short> d(n, m), d2(n, m);
 			for(int i=0; i<m; i++) for(int j: posiciones[i][sol[i]]) d[j]--;
 			for(int i=0; i<m; i++) d2[i] = d[i];
 
@@ -177,14 +175,8 @@ class Dataset{
 					sinMejora = 0;
 				}else sinMejora += 1;
 			}
-			for(int i=0; i<m; i++) if(sol[i] != 'A' && sol[i] != 'C' && sol[i] != 'G' && sol[i] != 'T') cout << "saddsdsadsasddas" << endl;
-
-			cout << "aaaaaa" << endl;
-			cout << sol[m-1] << endl;
-
-			cout << calidad(sol) << endl;
-			cout << "bbbbbb" << endl;
-
+			
+			cout << sol << endl;
 			return pair<string, int>{sol, calidad(sol)};
 		}
 
@@ -223,9 +215,9 @@ class Dataset{
 		}
 
 		int calidad(string sol){
-			vector<int> hamming(n, m);
-			for(int i=0; i<m; i++) for(int j: posiciones[i][sol[i]]) hamming[j]--;
+			vector<short> hamming(n, m);
 
+			for(int i=0; i<m; i++) for(int j: posiciones[i][sol[i]]) hamming[j]--;
 			return *max_element(hamming.begin(), hamming.end());
 		}
 				
@@ -450,11 +442,11 @@ int main(int argc, char *argv[]){
 		if( !strcmp(argv[i], "-r" ) ) rho = atof(argv[i+1]);
 	}
 
-	Dataset d(instancia);
-	d.heuristica();
+	//Dataset d(instancia);
+	//d.heuristica();
 
-	//Sim s(instancia);
-	//s.iniciar();
+	Sim s(instancia);
+	s.iniciar();
 
 	cout << "fin" << endl;
 	return 0;
