@@ -19,6 +19,21 @@ bool prob(double p){
 	else return false;
 }
 
+
+
+/*
+	auto start = high_resolution_clock::now();
+	
+
+	auto finish = high_resolution_clock::now();
+	auto f = duration_cast<milliseconds>(finish - start).count();
+
+	cout << f << endl;
+	exit(0);
+
+*/
+
+
 class Dataset{
 	private:
 		vector<int> indices;
@@ -152,3 +167,4 @@ int main(int argc, char *argv[]){
 	cout << "Dmin: " << Dmin << endl;
 	return 0;
 }
+

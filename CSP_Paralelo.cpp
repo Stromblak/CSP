@@ -7,19 +7,18 @@
 #include <algorithm>
 #include <random>
 #include <queue>
-using namespace std;
-
 #include <chrono>
+#include <omp.h>
+using namespace std;
 using namespace chrono;
 
-// Parametros
 string instancia = "instancias/10-1000.txt";
-int tiempoMaximo = 10, update = 0;
+int tiempoMaximo = 11, printMejorIter = 0, printNuevaMejor = 1, hilos = 4;
 double fer0 = 1000;
 minstd_rand rng;
+vector<int> calidad(tiempoMaximo+1);
 
 // Variables
-int hilos = 6;
 int poblacion = 20;			// Poblacion
 int torneos = 17;			// Numero de torneos para crear el antibiotico
 double ph = 0.05;			// Probabilidad de que el individuo use 
@@ -126,7 +125,6 @@ class Dataset{
 			vector<short> hamming(n, m);
 
 			for(int i=0; i<m; i++) for(int j: posiciones[i][sol[i]]) hamming[j]--;
-
 			return *max_element(hamming.begin(), hamming.end());
 		}
 				
@@ -206,7 +204,6 @@ class Bacteria{
 };
 
 
-vector<vector<int>> calidad(tiempoMaximo+1);
 class Sim{
 	private:
 		Dataset *dataset;
@@ -219,43 +216,15 @@ class Sim{
 			bacterias = vector<Bacteria>(poblacion, Bacteria(dataset));
 		}
 
-		void evaluarBacterias(){
-			int b, mejorIter = dataset->m + 1;
-
-			#pragma omp parallel num_threads ( hilos )
-				for(int i=0; i<poblacion; i++){
-					bacterias[i].actualizarFitness();
-
-					#pragma omp critical
-						if(bacterias[i].fitness < mejorIter){
-							mejorIter = bacterias[i].fitness;
-							b = i;
-						}
-				}
-
-			if(mejorIter < mejor){
-				mejor = mejorIter;
-				mejorSol = bacterias[b].solucion;
-
-				tiempoMejor = time(NULL) - ti;
-				calidad[tiempoMejor].push_back(mejor);
-
-				cout << "Nueva solucion: " << mejor << "  Tiempo: " << tiempoMejor << endl;
-			}
-
-			if(update) cout << mejorIter << " " << antibiotico << endl;
-		}
-
 		void crearAntibiotico(){
 			antibiotico = 0;
-			#pragma omp parallel num_threads ( hilos )
-				for(int i=0; i<torneos; i++){
-					int r1 = rng()%poblacion;
-					int r2 = (r1 + 1 + rng()%(poblacion-1))%poblacion;
-					
-					#pragma omp critical
-						antibiotico = max(antibiotico, max(bacterias[r1].fitness, bacterias[r2].fitness));
-				}
+
+			for(int i=0; i<torneos; i++){
+				int r1 = rng()%poblacion;
+				int r2 = (r1 + 1 + rng()%(poblacion-1))%poblacion;
+				
+				antibiotico = max(antibiotico, max(bacterias[r1].fitness, bacterias[r2].fitness));
+			}
 		}
 
 		void clasificacion(){
@@ -268,27 +237,45 @@ class Sim{
 			}
 		}
 
-		void mutacion(){
-			#pragma omp parallel num_threads ( hilos )
-				for(Bacteria &b: bacterias) if(prob(pm)) b.mutar();
-		}
+		void mutacion_busquedaLocal_evaluacion(){
+			int b, mejorIter = dataset->m + 1;
 
-		void busquedaLocal(){
-			#pragma omp parallel num_threads ( hilos )
+			# pragma omp parallel num_threads ( hilos )
+			{
+				for(Bacteria &b: bacterias) if(prob(pm)) b.mutar();
 				for(Bacteria &b: bacterias) if(prob(bl)) b.busquedaLocal();
+
+				for(int i=0; i<poblacion; i++){
+					bacterias[i].actualizarFitness();
+
+					# pragma omp critical
+						if(bacterias[i].fitness < mejorIter){
+							mejorIter = bacterias[i].fitness;
+							b = i;
+						}
+				}
+			}
+
+			if(mejorIter < mejor){
+				mejor = mejorIter;
+				mejorSol = bacterias[b].solucion;
+
+				tiempoMejor = time(NULL) - ti;
+				if(printNuevaMejor) cout << "Nueva solucion: " << mejor << "  Tiempo: " << tiempoMejor << endl;
+			}
+
+			if(printMejorIter) cout << mejorIter << " " << antibiotico << endl;
 		}
 
 		void administrarAntibiotico(){		
 			if(donadoras.size() <= 1) return;
 
-			#pragma omp parallel num_threads ( hilos )
-				for(int i: receptoras){
-					int r1 = rng()%donadoras.size();
-					int r2 = (donadoras[r1] + 1 + rng()%(donadoras.size()-1))%donadoras.size();
+			for(int i: receptoras){
+				int r1 = rng()%donadoras.size();
+				int r2 = (donadoras[r1] + 1 + rng()%(donadoras.size()-1))%donadoras.size();
 
-					#pragma omp critical
-						bacterias[i].hijo(&bacterias[donadoras[r1]], &bacterias[donadoras[r2]]);
-				}
+				bacterias[i].hijo(&bacterias[donadoras[r1]], &bacterias[donadoras[r2]]);
+			}
 		}
 
 		void actualizarFeromonas(){
@@ -300,8 +287,7 @@ class Sim{
 		}
 
 		void agregarFeromonas(string sol, int cal){
-			#pragma omp parallel num_threads ( hilos )
-				for(int i=0; i<sol.size(); i++) dataset->feromonas[i][sol[i]] += dataset->m - cal;
+			for(int i=0; i<sol.size(); i++) dataset->feromonas[i][sol[i]] += dataset->m - cal;
 		}
 
 	public:
@@ -313,13 +299,12 @@ class Sim{
 
 		auto iniciar(){
 			crearPoblacion();
-
-			while(time(NULL) - ti <= tiempoMaximo){
+			while(time(NULL) - ti < tiempoMaximo){
+				
 				crearAntibiotico();
-
-				mutacion();
-				busquedaLocal();
-				evaluarBacterias();
+				mutacion_busquedaLocal_evaluacion();
+				
+				calidad[ min((int)(time(NULL) - ti), tiempoMaximo-1)] = mejor;
 
 				clasificacion();
 				actualizarFeromonas();
@@ -333,31 +318,29 @@ class Sim{
 
 
 void analisis(){
-	vector<string> n = {"10-"};
-	vector<string> m = {"1000-"};
+	printNuevaMejor = 0;
+	vector<string> n = {"30-"};
+	vector<string> m = {"5000-"};
 
 	for(auto ni: n){
 		for(auto mi: m){
-			calidad = vector<vector<int>>(tiempoMaximo+1);
-			int ultimo = 0;
-
 			cout << ni + mi << endl;
 
-			for(int i=1; i<=10; i++){
-				for(int rep=0; rep<2; rep++){
-					string instancia = "instancias/" + ni + mi + to_string(i) + ".txt";
-					Sim s(instancia);
-					s.iniciar();
-				}
+			vector<vector<int>> acumulados(tiempoMaximo);
+			for(int i=0; i<10; i++){
+				calidad = vector<int>(tiempoMaximo);
+
+				string instancia = "instancias/" + ni + mi + to_string(i+1) + ".txt";
+
+				Sim s(instancia);
+				s.iniciar();
+
+				for(int j=0; j<tiempoMaximo; j++) if(calidad[j]) acumulados[j].push_back(calidad[j]);
 			}
 
-			for(int i=0; i<tiempoMaximo+1; i++){
-				if(calidad[i].empty()) cout << ultimo << endl;
-				else{
-					int promedio = reduce(calidad[i].begin(), calidad[i].end()) / (double)calidad[i].size();
-					cout << promedio << endl;
-					ultimo = promedio;
-				}
+			for(int i=0; i<tiempoMaximo; i++){
+				int promedio = accumulate(acumulados[i].begin(), acumulados[i].end(), 0) / (double)acumulados[i].size();
+				cout << promedio << endl;
 			}
 		}
 	}
@@ -370,12 +353,12 @@ int main(int argc, char *argv[]){
 		// Parametros
 		if( !strcmp(argv[i], "-i" ) ) instancia = argv[i+1];
 		if( !strcmp(argv[i], "-t" ) ) tiempoMaximo = atof(argv[i+1]);
+		if( !strcmp(argv[i], "-h" ) ) hilos = atoi(argv[i+1]);
+
 
 		// Variables
 		if( !strcmp(argv[i], "-p" ) ) poblacion = atoi(argv[i+1]);
 		if( !strcmp(argv[i], "-tor" ) ) torneos = atoi(argv[i+1]);
-		
-		if( !strcmp(argv[i], "-h" ) ) hilos = atoi(argv[i+1]);
 
 		if( !strcmp(argv[i], "-pg" ) ) ph = atof(argv[i+1]);
 		if( !strcmp(argv[i], "-nb" ) ) N = atoi(argv[i+1]);
@@ -391,20 +374,3 @@ int main(int argc, char *argv[]){
 	cout << "fin" << endl;
 	return 0;
 }
-
-
-
-
-/*
-
-	
-	auto start = high_resolution_clock::now();
-	
-
-	auto finish = high_resolution_clock::now();
-	auto f = duration_cast<milliseconds>(finish - start).count();
-
-	cout << f << endl;
-	exit(0);
-
-*/
