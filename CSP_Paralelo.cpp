@@ -12,7 +12,7 @@
 using namespace std;
 using namespace chrono;
 
-string instancia = "instancias/10-1000.txt";
+string instancia = "instancias/30-5000-1.txt";
 int tiempoMaximo = 11, printMejorIter = 0, printNuevaMejor = 1, hilos = 4;
 double fer0 = 1000;
 minstd_rand rng;
@@ -83,7 +83,7 @@ class Dataset{
 			int NoImprov = 0;
 			while (NoImprov <= N){
 				int b = rng()%dataset.size();
-
+			
 				for(int j=0; j<m; j++){
 					if( dataset[b][j] != s[j]){
 						int max = -1;
@@ -238,21 +238,19 @@ class Sim{
 		}
 
 		void mutacion_busquedaLocal_evaluacion(){
+			# pragma omp parallel
+				for(Bacteria &b: bacterias){
+					if(prob(pm)) b.mutar();
+					if(prob(bl)) b.busquedaLocal();
+				}
+
 			int b, mejorIter = dataset->m + 1;
+			for(int i=0; i<poblacion; i++){
+				bacterias[i].actualizarFitness();
 
-			# pragma omp parallel num_threads ( hilos )
-			{
-				for(Bacteria &b: bacterias) if(prob(pm)) b.mutar();
-				for(Bacteria &b: bacterias) if(prob(bl)) b.busquedaLocal();
-
-				for(int i=0; i<poblacion; i++){
-					bacterias[i].actualizarFitness();
-
-					# pragma omp critical
-						if(bacterias[i].fitness < mejorIter){
-							mejorIter = bacterias[i].fitness;
-							b = i;
-						}
+				if(bacterias[i].fitness < mejorIter){
+					mejorIter = bacterias[i].fitness;
+					b = i;
 				}
 			}
 
@@ -283,11 +281,8 @@ class Sim{
 			if(!donadoras.empty()) b = donadoras[rng()%donadoras.size()];
 			else b = rng()%poblacion;
 
-			agregarFeromonas(bacterias[b].solucion, bacterias[b].fitness);	
-		}
-
-		void agregarFeromonas(string sol, int cal){
-			for(int i=0; i<sol.size(); i++) dataset->feromonas[i][sol[i]] += dataset->m - cal;
+			# pragma omp parallel for
+				for(int i=0; i<dataset->m; i++) dataset->feromonas[i][bacterias[b].solucion[i]] += dataset->m - bacterias[b].fitness;
 		}
 
 	public:
@@ -319,8 +314,8 @@ class Sim{
 
 void analisis(){
 	printNuevaMejor = 0;
-	vector<string> n = {"30-"};
-	vector<string> m = {"5000-"};
+	vector<string> n = {"10-", "30-"};
+	vector<string> m = {"1000-", "5000-"};
 
 	for(auto ni: n){
 		for(auto mi: m){
@@ -368,7 +363,8 @@ int main(int argc, char *argv[]){
 
 		if( !strcmp(argv[i], "-r" ) ) rho = atof(argv[i+1]);
 	}
-
+	omp_set_num_threads(hilos);
+	
 	analisis();
 
 	cout << "fin" << endl;
