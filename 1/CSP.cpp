@@ -8,25 +8,24 @@
 #include <random>
 #include <queue>
 #include <chrono>
-#include <omp.h>
 using namespace std;
 using namespace chrono;
 
 string instancia = "instancias/10-1000.txt";
-int tiempoMaximo = 11, printMejorIter = 0, printNuevaMejor = 1, hilos = 4;
+int tiempoMaximo = 11, printMejorIter = 0, printNuevaMejor = 1;
 double fer0 = 1000;
 minstd_rand rng;
-vector<int> calidad(tiempoMaximo+1);
+vector<int> calidad;
 
 // Variables
-int poblacion = 20;			// Poblacion
-int torneos = 17;			// Numero de torneos para crear el antibiotico
+int poblacion = 2;			// Poblacion
+int torneos = 1;			// Numero de torneos para crear el antibiotico
 double ph = 0.05;			// Probabilidad de que el individuo use 
 int N = 2;					// Limite de busquedas sin mejoras para la heuristica
 
 double pm = 0.001;			// Probabilidad mutacion
-double bl = 0.05;			// Probabilidad busqueda local
-double rho = 0.5;			// Factor de evaporacion de feromonas
+double bl = 1;				// Probabilidad busqueda local 0.05
+double rho = 0.1;			// Factor de evaporacion de feromonas
 
 
 bool prob(double p){
@@ -212,6 +211,61 @@ class Sim{
 		vector<int> donadoras, receptoras;
 		string mejorSol;
 
+		void crearPoblacion(){
+			bacterias = vector<Bacteria>(poblacion, Bacteria(dataset));
+		}
+
+		void evaluarBacterias(){
+			int b, mejorIter = dataset->m + 1;
+
+			for(int i=0; i<poblacion; i++){
+				bacterias[i].actualizarFitness();
+				if(bacterias[i].fitness < mejorIter){
+					mejorIter = bacterias[i].fitness;
+					b = i;
+				}
+			}
+
+			if(mejorIter < mejor){
+				mejor = mejorIter;
+				mejorSol = bacterias[b].solucion;
+
+				tiempoMejor = time(NULL) - ti;
+				if(printNuevaMejor) cout << "Nueva solucion: " << mejor << "  Tiempo: " << tiempoMejor << endl;
+			}
+
+			if(printMejorIter) cout << mejorIter << " " << antibiotico << endl;
+		}
+
+		void crearAntibiotico(){
+			antibiotico = 0;
+
+			for(int i=0; i<torneos; i++){
+				int r1 = rng()%poblacion;
+				int r2 = (r1 + 1 + rng()%(poblacion-1))%poblacion;
+				
+				antibiotico = max(antibiotico, max(bacterias[r1].fitness, bacterias[r2].fitness));
+			}
+		}
+
+		void clasificacion(){
+			receptoras.clear();
+			donadoras.clear();
+			
+			for(int i=0; i<poblacion; i++){
+				if(bacterias[i].fitness < antibiotico) donadoras.push_back(i);
+				else receptoras.push_back(i);
+			}
+		}
+
+		void mutacion(){
+			for(Bacteria &b: bacterias) if(prob(pm)) b.mutar();
+		}
+
+		void busquedaLocal(){
+			for(Bacteria &b: bacterias) if(prob(bl)) b.busquedaLocal();
+		}
+
 		void administrarAntibiotico(){		
 			if(donadoras.size() <= 1) return;
 
@@ -223,6 +277,17 @@ class Sim{
 			}
 		}
 
+		void actualizarFeromonas(){
+			int b;
+			if(!donadoras.empty()) b = donadoras[rng()%donadoras.size()];
+			else b = rng()%poblacion;
+
+			agregarFeromonas(bacterias[b].solucion, bacterias[b].fitness);	
+		}
+
+		void agregarFeromonas(string sol, int cal){
+			for(int i=0; i<sol.size(); i++) dataset->feromonas[i][sol[i]] += dataset->m - cal;
+		}
 
 	public:
 		Sim(string instancia){
@@ -231,79 +296,21 @@ class Sim{
 			mejor = dataset->m+1;
 		}
 
-		pair<int, int> iniciar(){
-			bacterias = vector<Bacteria>(poblacion, Bacteria(dataset));
-
+		auto iniciar(){
+			crearPoblacion();
 			while(time(NULL) - ti < tiempoMaximo){
-				// crear antibiotico
-				#pragma omp parallel num_threads(hilos)
-				{
-					antibiotico = 0;
+				
+				crearAntibiotico();
 
-					#pragma omp for
-						for(int i=0; i<torneos; i++){
-							int r1 = rng()%poblacion;
-							int r2 = (r1 + 1 + rng()%(poblacion-1))%poblacion;
-							
-							antibiotico = max(antibiotico, max(bacterias[r1].fitness, bacterias[r2].fitness));
-						}
+				mutacion();
+				busquedaLocal();
+				evaluarBacterias();
+				
+				calidad[ min((int)(time(NULL) - ti), tiempoMaximo-1)] = mejor;
 
-					// mutacion y busqueda local
-					for(Bacteria &b: bacterias){
-						if(prob(pm)) b.mutar();
-						if(prob(bl)) b.busquedaLocal();
-					}
-
-					// evaluacion
-					int b, mejorIter = dataset->m + 1;
-					for(int i=0; i<poblacion; i++){
-						bacterias[i].actualizarFitness();
-
-						if(bacterias[i].fitness < mejorIter){
-							mejorIter = bacterias[i].fitness;
-							b = i;
-						}
-					}
-
-					if(mejorIter < mejor){
-						mejor = mejorIter;
-						mejorSol = bacterias[b].solucion;
-
-						tiempoMejor = time(NULL) - ti;
-						if(printNuevaMejor) cout << "Nueva solucion: " << mejor << "  Tiempo: " << tiempoMejor << endl;
-					}
-					if(printMejorIter) cout << mejorIter << " " << antibiotico << endl;
-
-					
-					calidad[ min((int)(time(NULL) - ti), tiempoMaximo-1)] = mejor;
-
-					// clasificacion
-					receptoras.clear();
-					donadoras.clear();
-					for(int i=0; i<poblacion; i++){
-						if(bacterias[i].fitness < antibiotico) donadoras.push_back(i);
-						else receptoras.push_back(i);
-					}
-
-					// actualizar feromonas
-					int b;
-					if(!donadoras.empty()) b = donadoras[rng()%donadoras.size()];
-					else b = rng()%poblacion;
-					for(int i=0; i<dataset->m; i++) dataset->feromonas[i][bacterias[b].solucion[i]] += dataset->m - bacterias[b].fitness;
-
-					
-					// administrar antibiotico
-					if(donadoras.size() > 1){
-						for(int i: receptoras){
-							int r1 = rng()%donadoras.size();
-							int r2 = (donadoras[r1] + 1 + rng()%(donadoras.size()-1))%donadoras.size();
-
-							bacterias[i].hijo(&bacterias[donadoras[r1]], &bacterias[donadoras[r2]]);
-						}
-					}
-				}
-
-
+				clasificacion();
+				actualizarFeromonas();
+				administrarAntibiotico();
 			}
 			
 			cout << "Mejor solucion: " << mejor << "  Tiempo: " << tiempoMejor << endl;
@@ -348,8 +355,6 @@ int main(int argc, char *argv[]){
 		// Parametros
 		if( !strcmp(argv[i], "-i" ) ) instancia = argv[i+1];
 		if( !strcmp(argv[i], "-t" ) ) tiempoMaximo = atof(argv[i+1]);
-		if( !strcmp(argv[i], "-h" ) ) hilos = atoi(argv[i+1]);
-
 
 		// Variables
 		if( !strcmp(argv[i], "-p" ) ) poblacion = atoi(argv[i+1]);

@@ -18,13 +18,14 @@ double fer0 = 1000;
 minstd_rand rng;
 vector<int> calidad(tiempoMaximo+1);
 
-int poblacion = 50;			// Poblacion
-int torneos = 1;			// Numero de torneos para crear el antibiotico
+// Variables
+int poblacion = 2;			// Poblacion
+int torneos = 1;			// Numero de torneos para crear el antibiotico   17
 double ph = 0.05;			// Probabilidad de que el individuo use 
 int N = 2;					// Limite de busquedas sin mejoras para la heuristica
 
 double pm = 0.001;			// Probabilidad mutacion
-double bl = 0.2;			// Probabilidad busqueda local
+double bl = 1;			// Probabilidad busqueda local
 double rho = 0.1;			// Factor de evaporacion de feromonas
 
 
@@ -237,15 +238,16 @@ class Sim{
 		}
 
 		void mutacion_busquedaLocal_evaluacion(){
-			# pragma omp parallel for
+			# pragma omp parallel
 				for(Bacteria &b: bacterias){
 					if(prob(pm)) b.mutar();
 					if(prob(bl)) b.busquedaLocal();
-					b.actualizarFitness();
 				}
 
 			int b, mejorIter = dataset->m + 1;
 			for(int i=0; i<poblacion; i++){
+				bacterias[i].actualizarFitness();
+
 				if(bacterias[i].fitness < mejorIter){
 					mejorIter = bacterias[i].fitness;
 					b = i;
@@ -279,10 +281,11 @@ class Sim{
 			if(!donadoras.empty()) b = donadoras[rng()%donadoras.size()];
 			else b = rng()%poblacion;
 
-			for(int i=0; i<dataset->m; i++){
-				int aux = dataset->feromonas[i][bacterias[b].solucion[i]];
-				dataset->feromonas[i][bacterias[b].solucion[i]] = aux*(1.0-rho) + (dataset->m - bacterias[b].fitness);
-			}
+			# pragma omp parallel for
+				for(int i=0; i<dataset->m; i++){
+					int aux = dataset->feromonas[i][bacterias[b].solucion[i]];
+					dataset->feromonas[i][bacterias[b].solucion[i]] = aux*(1.0-rho) + (dataset->m - bacterias[b].fitness);
+				}
 		}
 
 	public:
@@ -314,8 +317,8 @@ class Sim{
 
 void analisis(){
 	printNuevaMejor = 0;
-	vector<string> n = {"30-"};
-	vector<string> m = {"5000-"};
+	vector<string> n = {"10-", "30-"};
+	vector<string> m = {"1000-", "5000-"};
 
 	for(auto ni: n){
 		for(auto mi: m){
@@ -345,22 +348,27 @@ void analisis(){
 int main(int argc, char *argv[]){
 	rng.seed(time(NULL));
 	for(int i=0; i<argc; i++){
+		// Parametros
 		if( !strcmp(argv[i], "-i" ) ) instancia = argv[i+1];
 		if( !strcmp(argv[i], "-t" ) ) tiempoMaximo = atof(argv[i+1]);
 		if( !strcmp(argv[i], "-h" ) ) hilos = atoi(argv[i+1]);
+
+
+		// Variables
 		if( !strcmp(argv[i], "-p" ) ) poblacion = atoi(argv[i+1]);
 		if( !strcmp(argv[i], "-tor" ) ) torneos = atoi(argv[i+1]);
+
 		if( !strcmp(argv[i], "-pg" ) ) ph = atof(argv[i+1]);
 		if( !strcmp(argv[i], "-nb" ) ) N = atoi(argv[i+1]);
+
 		if( !strcmp(argv[i], "-pm" ) ) pm = atof(argv[i+1]);
 		if( !strcmp(argv[i], "-bl" ) ) bl = atof(argv[i+1]);
+
 		if( !strcmp(argv[i], "-r" ) ) rho = atof(argv[i+1]);
 	}
 	omp_set_num_threads(hilos);
 	
 	analisis();
-	//Sim s(instancia);
-	//s.iniciar();
 
 	cout << "fin" << endl;
 	return 0;

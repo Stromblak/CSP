@@ -12,21 +12,21 @@
 using namespace std;
 using namespace chrono;
 
-string instancia = "instancias/10-1000.txt";
+string instancia = "instancias/30-5000-1.txt";
 int tiempoMaximo = 11, printMejorIter = 0, printNuevaMejor = 1, hilos = 4;
 double fer0 = 1000;
 minstd_rand rng;
 vector<int> calidad(tiempoMaximo+1);
 
 // Variables
-int poblacion = 20;			// Poblacion
-int torneos = 17;			// Numero de torneos para crear el antibiotico
+int poblacion = 50;			// Poblacion
+int torneos = 1;			// Numero de torneos para crear el antibiotico   17
 double ph = 0.05;			// Probabilidad de que el individuo use 
 int N = 2;					// Limite de busquedas sin mejoras para la heuristica
 
 double pm = 0.001;			// Probabilidad mutacion
-double bl = 0.05;			// Probabilidad busqueda local
-double rho = 0.5;			// Factor de evaporacion de feromonas
+double bl = 0.2;			// Probabilidad busqueda local
+double rho = 0.1;			// Factor de evaporacion de feromonas
 
 
 bool prob(double p){
@@ -83,7 +83,7 @@ class Dataset{
 			int NoImprov = 0;
 			while (NoImprov <= N){
 				int b = rng()%dataset.size();
-
+			
 				for(int j=0; j<m; j++){
 					if( dataset[b][j] != s[j]){
 						int max = -1;
@@ -123,10 +123,8 @@ class Dataset{
 
 		int calidad(string sol){
 			vector<short> hamming(n, m);
-			
-			for(int i=0; i<m; i++) 
-				for(int j: posiciones[i][sol[i]]) hamming[j]--;
 
+			for(int i=0; i<m; i++) for(int j: posiciones[i][sol[i]]) hamming[j]--;
 			return *max_element(hamming.begin(), hamming.end());
 		}
 				
@@ -214,6 +212,8 @@ class Sim{
 		vector<int> donadoras, receptoras;
 		string mejorSol;
 
+		int tmut = 0, tfer = 0, ttotal = 0;
+
 		void crearPoblacion(){
 			bacterias = vector<Bacteria>(poblacion, Bacteria(dataset));
 		}
@@ -240,20 +240,27 @@ class Sim{
 		}
 
 		void mutacion_busquedaLocal_evaluacion(){
-			int b, mejorIter = dataset->m + 1;
 			
-			#pragma omp parallel for
-				for(int i=0; i<poblacion; i++){
-					if(prob(pm)) bacterias[i].mutar();
-					if(prob(pm)) bacterias[i].busquedaLocal();
-					bacterias[i].actualizarFitness();
+			auto start = high_resolution_clock::now();
+			# pragma omp parallel
+				for(Bacteria &b: bacterias){
+					if(prob(pm)) b.mutar();
+					if(prob(bl)) b.busquedaLocal();
 				}
+			auto stop = high_resolution_clock::now();
+				
+			auto duration = duration_cast<microseconds>(stop - start);
+			tmut += duration.count();
 
-			for(int i=0; i<poblacion; i++)
+			int b, mejorIter = dataset->m + 1;
+			for(int i=0; i<poblacion; i++){
+				bacterias[i].actualizarFitness();
+
 				if(bacterias[i].fitness < mejorIter){
 					mejorIter = bacterias[i].fitness;
 					b = i;
 				}
+			}
 
 			if(mejorIter < mejor){
 				mejor = mejorIter;
@@ -268,12 +275,13 @@ class Sim{
 
 		void administrarAntibiotico(){		
 			if(donadoras.size() <= 1) return;
-				for(int i: receptoras){
-					int r1 = rng()%donadoras.size();
-					int r2 = (donadoras[r1] + 1 + rng()%(donadoras.size()-1))%donadoras.size();
-					
-					bacterias[i].hijo(&bacterias[donadoras[r1]], &bacterias[donadoras[r2]]);
-				}
+
+			for(int i: receptoras){
+				int r1 = rng()%donadoras.size();
+				int r2 = (donadoras[r1] + 1 + rng()%(donadoras.size()-1))%donadoras.size();
+
+				bacterias[i].hijo(&bacterias[donadoras[r1]], &bacterias[donadoras[r2]]);
+			}
 		}
 
 		void actualizarFeromonas(){
@@ -281,8 +289,17 @@ class Sim{
 			if(!donadoras.empty()) b = donadoras[rng()%donadoras.size()];
 			else b = rng()%poblacion;
 
-			#pragma omp parallel for
-				for(int i=0; i<dataset->m; i++) dataset->feromonas[i][bacterias[b].solucion[i]] += dataset->m - bacterias[b].fitness;
+			auto start = high_resolution_clock::now();
+			# pragma omp parallel for
+				for(int i=0; i<dataset->m; i++){
+					int aux = dataset->feromonas[i][bacterias[b].solucion[i]];
+					dataset->feromonas[i][bacterias[b].solucion[i]] = aux*(1.0-rho) + (dataset->m - bacterias[b].fitness);
+				}
+
+			auto stop = high_resolution_clock::now();
+			
+			auto duration = duration_cast<microseconds>(stop - start);
+			cout << "fer: " << duration.count() << endl;
 		}
 
 	public:
@@ -294,7 +311,9 @@ class Sim{
 
 		auto iniciar(){
 			crearPoblacion();
+		
 			while(time(NULL) - ti < tiempoMaximo){
+			    auto start = high_resolution_clock::now();
 				
 				crearAntibiotico();
 				mutacion_busquedaLocal_evaluacion();
@@ -304,7 +323,15 @@ class Sim{
 				clasificacion();
 				actualizarFeromonas();
 				administrarAntibiotico();
+				auto stop = high_resolution_clock::now();
+				
+				auto duration = duration_cast<microseconds>(stop - start);
+				ttotal +=  duration.count();
 			}
+
+			cout << (double)tmut / (double) ttotal << endl;
+
+
 			
 			cout << "Mejor solucion: " << mejor << "  Tiempo: " << tiempoMejor << endl;
 			return pair<int, int>(mejor, tiempoMejor);
@@ -314,8 +341,8 @@ class Sim{
 
 void analisis(){
 	printNuevaMejor = 0;
-	vector<string> n = {"30-"};
-	vector<string> m = {"5000-"};
+	vector<string> n = {"10-", "30-"};
+	vector<string> m = {"1000-", "5000-"};
 
 	for(auto ni: n){
 		for(auto mi: m){
@@ -363,9 +390,11 @@ int main(int argc, char *argv[]){
 
 		if( !strcmp(argv[i], "-r" ) ) rho = atof(argv[i+1]);
 	}
-
 	omp_set_num_threads(hilos);
-	analisis();
+	
+	//analisis();
+	Sim s(instancia);
+	s.iniciar();
 
 	cout << "fin" << endl;
 	return 0;

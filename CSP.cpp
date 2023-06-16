@@ -8,24 +8,26 @@
 #include <random>
 #include <queue>
 #include <chrono>
+#include <omp.h>
 using namespace std;
 using namespace chrono;
 
-string instancia = "instancias/10-1000.txt";
-int tiempoMaximo = 11, printMejorIter = 0, printNuevaMejor = 1;
+string instancia = "instancias/30-5000-1.txt";
+int tiempoMaximo = 10, printMejorIter = 0, printNuevaMejor = 1, hilos = 4;
 double fer0 = 1000;
 minstd_rand rng;
-vector<int> calidad;
+vector<pair<float, int>> calidad;
 
-// Variables
-int poblacion = 20;			// Poblacion
-int torneos = 17;			// Numero de torneos para crear el antibiotico
+int poblacion = 50;			// Poblacion
+int torneos = 1;			// Numero de torneos para crear el antibiotico
 double ph = 0.05;			// Probabilidad de que el individuo use 
 int N = 2;					// Limite de busquedas sin mejoras para la heuristica
 
 double pm = 0.001;			// Probabilidad mutacion
-double bl = 0.05;			// Probabilidad busqueda local
-double rho = 0.5;			// Factor de evaporacion de feromonas
+double bl = 0.2;			// Probabilidad busqueda local
+double rho = 0.1;			// Factor de evaporacion de feromonas
+
+int limite;
 
 
 bool prob(double p){
@@ -82,7 +84,7 @@ class Dataset{
 			int NoImprov = 0;
 			while (NoImprov <= N){
 				int b = rng()%dataset.size();
-
+			
 				for(int j=0; j<m; j++){
 					if( dataset[b][j] != s[j]){
 						int max = -1;
@@ -206,35 +208,14 @@ class Bacteria{
 class Sim{
 	private:
 		Dataset *dataset;
-		int antibiotico, mejor, tiempoMejor, ti;
+		int antibiotico, mejor, tiempoMejor;
+		high_resolution_clock::time_point ti;
 		vector<Bacteria> bacterias;
 		vector<int> donadoras, receptoras;
 		string mejorSol;
 
 		void crearPoblacion(){
 			bacterias = vector<Bacteria>(poblacion, Bacteria(dataset));
-		}
-
-		void evaluarBacterias(){
-			int b, mejorIter = dataset->m + 1;
-
-			for(int i=0; i<poblacion; i++){
-				bacterias[i].actualizarFitness();
-				if(bacterias[i].fitness < mejorIter){
-					mejorIter = bacterias[i].fitness;
-					b = i;
-				}
-			}
-
-			if(mejorIter < mejor){
-				mejor = mejorIter;
-				mejorSol = bacterias[b].solucion;
-
-				tiempoMejor = time(NULL) - ti;
-				if(printNuevaMejor) cout << "Nueva solucion: " << mejor << "  Tiempo: " << tiempoMejor << endl;
-			}
-
-			if(printMejorIter) cout << mejorIter << " " << antibiotico << endl;
 		}
 
 		void crearAntibiotico(){
@@ -258,12 +239,31 @@ class Sim{
 			}
 		}
 
-		void mutacion(){
-			for(Bacteria &b: bacterias) if(prob(pm)) b.mutar();
-		}
+		void mutacion_busquedaLocal_evaluacion(){
+			# pragma omp parallel for if(hilos)
+				for(Bacteria &b: bacterias){
+					if(prob(pm)) b.mutar();
+					if(prob(bl)) b.busquedaLocal();
+					b.actualizarFitness();
+				}
 
-		void busquedaLocal(){
-			for(Bacteria &b: bacterias) if(prob(bl)) b.busquedaLocal();
+			int b, mejorIter = dataset->m + 1;
+			for(int i=0; i<poblacion; i++){
+				if(bacterias[i].fitness < mejorIter){
+					mejorIter = bacterias[i].fitness;
+					b = i;
+				}
+			}
+
+			if(mejorIter < mejor){
+				mejor = mejorIter;
+				mejorSol = bacterias[b].solucion;
+
+				tiempoMejor = duration_cast<milliseconds>(high_resolution_clock::now() -  ti).count()/1000.0;
+				if(printNuevaMejor) cout << "Nueva solucion: " << mejor << "  Tiempo: " << tiempoMejor << endl;
+			}
+
+			if(printMejorIter) cout << mejorIter << " " << antibiotico << endl;
 		}
 
 		void administrarAntibiotico(){		
@@ -282,31 +282,29 @@ class Sim{
 			if(!donadoras.empty()) b = donadoras[rng()%donadoras.size()];
 			else b = rng()%poblacion;
 
-			agregarFeromonas(bacterias[b].solucion, bacterias[b].fitness);	
-		}
-
-		void agregarFeromonas(string sol, int cal){
-			for(int i=0; i<sol.size(); i++) dataset->feromonas[i][sol[i]] += dataset->m - cal;
+			for(int i=0; i<dataset->m; i++){
+				int aux = dataset->feromonas[i][bacterias[b].solucion[i]];
+				dataset->feromonas[i][bacterias[b].solucion[i]] = aux*(1.0-rho) + (dataset->m - bacterias[b].fitness);
+			}
 		}
 
 	public:
 		Sim(string instancia){
-			ti = time(NULL);
+			ti = high_resolution_clock::now();
 			dataset = new Dataset(instancia);
 			mejor = dataset->m+1;
 		}
 
 		auto iniciar(){
 			crearPoblacion();
-			while(time(NULL) - ti < tiempoMaximo){
+
+			while( duration_cast<milliseconds>(high_resolution_clock::now() -  ti).count() < tiempoMaximo*1000){
 				
 				crearAntibiotico();
+				mutacion_busquedaLocal_evaluacion();
 
-				mutacion();
-				busquedaLocal();
-				evaluarBacterias();
-				
-				calidad[ min((int)(time(NULL) - ti), tiempoMaximo-1)] = mejor;
+				float ms = duration_cast<milliseconds>(high_resolution_clock::now() -  ti).count();
+				calidad.push_back( { ms/1000.0, mejor} );
 
 				clasificacion();
 				actualizarFeromonas();
@@ -319,30 +317,74 @@ class Sim{
 };
 
 
+void analisis2(){
+	printNuevaMejor = 0;
+	vector<string> nm = {"10-1000-", "10-5000-", "30-1000-", "30-5000-"};
+	vector<int> lim = {595, 2960, 680, 3450};
+
+	int i = 0;
+	for(int i=0; i<4; i++){
+		cout << nm[i] << endl;
+		limite = lim[i];
+
+		string instancia = "instancias/" + nm[i] + to_string(i+1) + ".txt";
+
+		auto start = high_resolution_clock::now();
+		for(int i=0; i<10; i++){
+			Sim s(instancia);
+			s.iniciar();
+		}
+
+		auto stop = high_resolution_clock::now();
+		auto duration = duration_cast<milliseconds>(stop - start).count();
+
+		cout << duration/(10.0 * 1000.0) << endl;
+	}
+}
+
 void analisis(){
 	printNuevaMejor = 0;
-	vector<string> n = {"10-", "30-"};
-	vector<string> m = {"1000-", "5000-"};
+	vector<string> n = {"30-"};
+	vector<string> m = {"5000-"};
 
 	for(auto ni: n){
 		for(auto mi: m){
 			cout << ni + mi << endl;
 
-			vector<vector<int>> acumulados(tiempoMaximo);
+			hilos = 8;
 			for(int i=0; i<10; i++){
-				calidad = vector<int>(tiempoMaximo);
+				calidad = vector<pair<float, int>>();
 
 				string instancia = "instancias/" + ni + mi + to_string(i+1) + ".txt";
 
 				Sim s(instancia);
 				s.iniciar();
+				
+				fstream file;
+				file.open("calidad/" + ni + mi + to_string(i+1) + "p.txt", ios_base::out);
+			
+				for(int i=0; i<calidad.size(); i++) 
+					file << to_string(calidad[i].first) + " " + to_string(calidad[i].second) << endl;
 
-				for(int j=0; j<tiempoMaximo; j++) if(calidad[j]) acumulados[j].push_back(calidad[j]);
+				file.close();
 			}
 
-			for(int i=0; i<tiempoMaximo; i++){
-				int promedio = accumulate(acumulados[i].begin(), acumulados[i].end(), 0) / (double)acumulados[i].size();
-				cout << promedio << endl;
+			hilos = 0;
+			for(int i=0; i<10; i++){
+				calidad = vector<pair<float, int>>();
+
+				string instancia = "instancias/" + ni + mi + to_string(i+1) + ".txt";
+
+				Sim s(instancia);
+				s.iniciar();
+				
+				fstream file;
+				file.open("calidad/" + ni + mi + to_string(i+1) + "s.txt", ios_base::out);
+			
+				for(int i=0; i<calidad.size(); i++) 
+					file << to_string(calidad[i].first) + " " + to_string(calidad[i].second) << endl;
+
+				file.close();
 			}
 		}
 	}
@@ -352,24 +394,22 @@ void analisis(){
 int main(int argc, char *argv[]){
 	rng.seed(time(NULL));
 	for(int i=0; i<argc; i++){
-		// Parametros
 		if( !strcmp(argv[i], "-i" ) ) instancia = argv[i+1];
 		if( !strcmp(argv[i], "-t" ) ) tiempoMaximo = atof(argv[i+1]);
-
-		// Variables
+		if( !strcmp(argv[i], "-h" ) ) hilos = atoi(argv[i+1]);
 		if( !strcmp(argv[i], "-p" ) ) poblacion = atoi(argv[i+1]);
 		if( !strcmp(argv[i], "-tor" ) ) torneos = atoi(argv[i+1]);
-
 		if( !strcmp(argv[i], "-pg" ) ) ph = atof(argv[i+1]);
 		if( !strcmp(argv[i], "-nb" ) ) N = atoi(argv[i+1]);
-
 		if( !strcmp(argv[i], "-pm" ) ) pm = atof(argv[i+1]);
 		if( !strcmp(argv[i], "-bl" ) ) bl = atof(argv[i+1]);
-
 		if( !strcmp(argv[i], "-r" ) ) rho = atof(argv[i+1]);
 	}
-
+	omp_set_num_threads(hilos);
+	
 	analisis();
+	//Sim s(instancia);
+	//s.iniciar();
 
 	cout << "fin" << endl;
 	return 0;
