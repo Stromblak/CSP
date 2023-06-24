@@ -4,7 +4,7 @@ import random
 bases = ["A", "C", "G", "T"]
 n = [10, 30]
 m = [1000, 5000]
-ins = 10
+ins = 5
 
 
 for ni in n:
